@@ -21,7 +21,6 @@ COPY --chown=user app/ ./app/
 COPY --chown=user data/ ./data/
 COPY --chown=user notebooks/ ./notebooks/
 COPY --chown=user scripts/ ./scripts/
-COPY --chown=user tools/ ./tools/
 
 # Set environment variables
 ENV PORT=7860
