@@ -490,6 +490,7 @@ def _retrieve_context(query: str, k: int):
                     continue
                 try:
                     chunk_file = chunk_map[str(idx)] if str(idx) in chunk_map else chunk_map[idx]
+                    chunk_file = chunk_file.replace("\\", "/")
                     with open(chunk_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
                         retrieved_texts.append(f"- {data[0]['text']}")
