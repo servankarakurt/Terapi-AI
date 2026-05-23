@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+.env
+data/vector_store/
+data/chunks/
+*.db
+.venv/
+.vscode/
+.cursor/
+*.log
+get-pip.py
