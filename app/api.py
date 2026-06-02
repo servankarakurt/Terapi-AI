@@ -58,6 +58,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+async def read_root():
+    return {"status": "healthy", "message": "Psikoloji AI Chatbot API is running"}
+
 # Global Değişkenler
 embedding_model = None
 index = None
@@ -139,10 +143,28 @@ def assert_session_owner(session_id: int, current_user_id: int):
     if owner_id != current_user_id:
         raise HTTPException(status_code=403, detail="Bu oturuma erişim izniniz yok.")
 
+def log_secure_key(name: str, value: str):
+    if not value:
+        print(f"CRITICAL ERROR: {name} bulunamadı!")
+    else:
+        if len(value) > 8:
+            print(f"API KEY KONTROL - {name} bulundu: {value[:4]}...{value[-4:]} (Uzunluk: {len(value)})")
+        else:
+            print(f"API KEY KONTROL - {name} bulundu (Çok kısa/Geçersiz olabilir): {value} (Uzunluk: {len(value)})")
+
 @app.on_event("startup")
 def load_resources():
     global embedding_model, index, chunk_map, sentiment_tokenizer, sentiment_model
     print("SISTEM BASLATILIYOR...")
+    
+    print("\n--- ORTAM DEĞİŞKENLERİ KONTROLÜ (SAFE LOGGING) ---")
+    log_secure_key("GEMINI_API_KEY", GEMINI_API_KEY)
+    log_secure_key("GROQ_API_KEY", GROQ_API_KEY)
+    log_secure_key("ELEVENLABS_API_KEY", ELEVENLABS_API_KEY)
+    log_secure_key("ELEVENLABS_VOICE_ID", ELEVENLABS_VOICE_ID)
+    log_secure_key("JWT_SECRET_KEY", JWT_SECRET_KEY)
+    log_secure_key("GOOGLE_CLIENT_ID", GOOGLE_CLIENT_ID)
+    print("-------------------------------------------------\n")
     
     # 1. Embedding Model (CPU - Bilgisayarı yormaz)
     print("1. Embedding Modeli (CPU) Yukleniyor...")
@@ -401,7 +423,7 @@ def transcribe_with_groq(audio_bytes: bytes, filename: str, content_type: str) -
             files={
                 "file": (filename or "recording.wav", audio_bytes, content_type or "audio/wav")
             },
-            data={"model": "whisper-large-v3-turbo"},
+            data={"model": "whisper-large-v3-turbo", "language": "tr"},
             timeout=90,
         )
     except requests.RequestException as exc:
