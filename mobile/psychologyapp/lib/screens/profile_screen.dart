@@ -107,7 +107,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               _input(_displayNameController, 'Ad Soyad'),
               _input(_ageController, 'Yaş', keyboardType: TextInputType.number),
               DropdownButtonFormField<String>(
-                value: _gender,
+                initialValue: _gender,
                 decoration: const InputDecoration(labelText: 'Cinsiyet'),
                 items: const [
                   DropdownMenuItem(value: 'Belirtilmedi', child: Text('Belirtilmedi')),
@@ -136,6 +136,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Text('Profili Kaydet'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.redAccent,
+                    side: const BorderSide(color: Colors.redAccent, width: 1.5),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: _loading ? null : () async {
+                    setState(() => _loading = true);
+                    try {
+                      await _api.logout();
+                      if (!context.mounted) return;
+                      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Çıkış yapılamadı: $e')),
+                        );
+                      }
+                    } finally {
+                      if (mounted) setState(() => _loading = false);
+                    }
+                  },
+                  icon: const Icon(Icons.logout, color: Colors.redAccent),
+                  label: const Text('Hesaptan Çıkış Yap', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
             ],

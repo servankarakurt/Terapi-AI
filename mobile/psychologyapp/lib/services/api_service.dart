@@ -400,4 +400,61 @@ class ApiService {
     final retryRequest = await buildRequest();
     return retryRequest.send();
   }
+
+  Future<String?> generateTts({required String text}) async {
+    if (AppConfig.elevenLabsApiKey.isEmpty || AppConfig.elevenLabsVoiceId.isEmpty) {
+      return null;
+    }
+    
+    try {
+      var voiceId = AppConfig.elevenLabsVoiceId;
+      var url = Uri.parse('https://api.elevenlabs.io/v1/text-to-speech/$voiceId');
+      var response = await _client.post(
+        url,
+        headers: {
+          'xi-api-key': AppConfig.elevenLabsApiKey,
+          'Content-Type': 'application/json',
+          'Accept': 'audio/mpeg',
+        },
+        body: jsonEncode({
+          'text': text,
+          'model_id': 'eleven_multilingual_v2',
+          'voice_settings': {'stability': 0.45, 'similarity_boost': 0.75},
+        }),
+      );
+
+      // Ücretsiz plan nedeniyle kütüphane sesi kısıtlandığında (400 veya 402 durumunda) hazır sese düşüş yap
+      if (response.statusCode == 400 || response.statusCode == 402) {
+        final bodyText = response.body.toLowerCase();
+        if (bodyText.contains('free users') || bodyText.contains('paid_plan_required')) {
+          voiceId = 'EXAVITQu4vr4xnSDxMaL'; // Sarah (Ready/Premade)
+          print('ElevenLabs: Local voice restricted. Retrying with fallback voice: $voiceId');
+          url = Uri.parse('https://api.elevenlabs.io/v1/text-to-speech/$voiceId');
+          response = await _client.post(
+            url,
+            headers: {
+              'xi-api-key': AppConfig.elevenLabsApiKey,
+              'Content-Type': 'application/json',
+              'Accept': 'audio/mpeg',
+            },
+            body: jsonEncode({
+              'text': text,
+              'model_id': 'eleven_multilingual_v2',
+              'voice_settings': {'stability': 0.45, 'similarity_boost': 0.75},
+            }),
+          );
+        }
+      }
+
+      if (response.statusCode >= 400) {
+        print('ElevenLabs local error: ${response.statusCode} - ${response.body}');
+        return null;
+      }
+
+      return base64Encode(response.bodyBytes);
+    } catch (e) {
+      print('ElevenLabs local exception: $e');
+      return null;
+    }
+  }
 }

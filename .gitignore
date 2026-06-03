@@ -8,3 +8,4 @@ __pycache__/
 .cursor/
 *.log
 get-pip.py
+scratch/

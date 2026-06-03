@@ -470,6 +470,37 @@ def generate_tts_elevenlabs(text: str) -> bytes:
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"ElevenLabs bağlantı hatası: {exc}") from exc
 
+    # Ücretsiz hesaplarda kütüphane sesleri engellenirse (400 veya 402 döner)
+    is_restricted = False
+    if response.status_code in (400, 402):
+        try:
+            err_data = response.json()
+            err_msg = err_data.get("detail", {}).get("message", "") if isinstance(err_data.get("detail"), dict) else str(err_data.get("detail", ""))
+            if "free users cannot use library voices" in err_msg.lower() or "paid_plan_required" in err_msg.lower():
+                is_restricted = True
+        except Exception:
+            if "free users" in response.text.lower() or "paid_plan" in response.text.lower():
+                is_restricted = True
+
+    if is_restricted:
+        # Hazır (premade) ve ücretsiz planda çalışan Sarah sesine düşüş yap
+        fallback_voice_id = "EXAVITQu4vr4xnSDxMaL"
+        print(f"ElevenLabs: {ELEVENLABS_VOICE_ID} ücretsiz planda engellenmiş. Hazır ses olan {fallback_voice_id} (Sarah) ile devam ediliyor...")
+        fallback_url = f"https://api.elevenlabs.io/v1/text-to-speech/{fallback_voice_id}"
+        try:
+            response = requests.post(
+                fallback_url,
+                headers={
+                    "xi-api-key": ELEVENLABS_API_KEY,
+                    "Accept": "audio/mpeg",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=90,
+            )
+        except requests.RequestException as exc:
+            raise HTTPException(status_code=502, detail=f"ElevenLabs bağlantı hatası (fallback): {exc}") from exc
+
     if response.status_code >= 400:
         raise HTTPException(
             status_code=502,

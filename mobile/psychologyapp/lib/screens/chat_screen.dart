@@ -5,6 +5,7 @@ import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
 import '../models/auth_models.dart';
@@ -37,6 +38,20 @@ class ChatArgs {
   final String traumaSummary;
 }
 
+class ChatMessage {
+  ChatMessage({
+    required this.text,
+    required this.isUser,
+    this.isVoice = false,
+    required this.timestamp,
+  });
+
+  final String text;
+  final bool isUser;
+  final bool isVoice;
+  final DateTime timestamp;
+}
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -46,7 +61,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
+class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final _api = ApiService();
   final _recorder = AudioRecorder();
   final _player = AudioPlayer();
@@ -64,9 +79,15 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   DateTime? _recordingStartedAt;
   DateTime? _lastVoiceDetectedAt;
 
-  static const double _speechThresholdDb = -35;
-  static const Duration _silenceTimeout = Duration(seconds: 3);
-  static const Duration _minRecordingBeforeAutoStop = Duration(milliseconds: 1500);
+  // New variables for dual-mode
+  bool _isVoiceMode = true;
+  final List<ChatMessage> _messages = [];
+  final _textController = TextEditingController();
+  final _scrollController = ScrollController();
+
+  static const double _speechThresholdDb = -45;
+  static const Duration _silenceTimeout = Duration(seconds: 5);
+  static const Duration _minRecordingBeforeAutoStop = Duration(milliseconds: 3000);
 
   @override
   void initState() {
@@ -96,6 +117,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     _waveController.dispose();
     _recorder.dispose();
     _player.dispose();
+    _textController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -131,7 +154,11 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     await _amplitudeSubscription?.cancel();
     _silenceTimer?.cancel();
 
-    await _recorder.start(const RecordConfig(), path: '');
+    final tempDir = await getTemporaryDirectory();
+    final path = '${tempDir.path}/temp_record.m4a';
+
+    await _recorder.start(const RecordConfig(), path: path);
+    if (!mounted) return;
     final now = DateTime.now();
     setState(() {
       _isRecording = true;
@@ -213,15 +240,45 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
       setState(() {
         _sessionId = response.sessionId ?? _sessionId;
+        if (response.transcript.isNotEmpty) {
+          _messages.add(ChatMessage(
+            text: response.transcript,
+            isUser: true,
+            isVoice: true,
+            timestamp: DateTime.now(),
+          ));
+        }
+        if (response.reply.isNotEmpty) {
+          _messages.add(ChatMessage(
+            text: response.reply,
+            isUser: false,
+            isVoice: true,
+            timestamp: DateTime.now(),
+          ));
+        }
       });
+      _scrollToBottom();
 
-      if (response.audioBase64 != null && response.audioBase64!.isNotEmpty) {
-        final bytes = base64Decode(response.audioBase64!);
+      String? audioBase64 = response.audioBase64;
+      if ((audioBase64 == null || audioBase64.isEmpty) && response.reply.isNotEmpty) {
+        // Fallback: local ElevenLabs Text-to-Speech synthesis from Flutter!
+        audioBase64 = await _api.generateTts(text: response.reply);
+      }
+
+      if (audioBase64 != null && audioBase64.isNotEmpty) {
+        final bytes = base64Decode(audioBase64);
         await _player.stop();
         await _player.play(BytesSource(bytes), volume: 1.0);
       } else if (response.ttsError != null && response.ttsError!.isNotEmpty && mounted) {
+        String cleanError = response.ttsError!;
+        if (cleanError.contains('ElevenLabs') || cleanError.contains('401') || cleanError.contains('unusual_activity')) {
+          cleanError = 'Seslendirme servis limitine ulaşıldı veya VPN kullanılıyor olabilir. Lütfen yukarıdan "Yazılı Sohbet" moduna geçip devam edin.';
+        }
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Seslendirilemedi: ${response.ttsError}')),
+          SnackBar(
+            content: Text(cleanError),
+            duration: const Duration(seconds: 5),
+          ),
         );
       }
       if (isAutoStop && mounted) {
@@ -240,11 +297,79 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     }
   }
 
+  Future<void> _sendTextMessage(ChatArgs args) async {
+    final query = _textController.text.trim();
+    if (query.isEmpty) return;
+
+    _textController.clear();
+
+    setState(() {
+      _messages.add(ChatMessage(
+        text: query,
+        isUser: true,
+        isVoice: false,
+        timestamp: DateTime.now(),
+      ));
+      _isVoiceProcessing = true;
+    });
+    _scrollToBottom();
+
+    try {
+      final response = await _api.sendChatMessage(
+        query: query,
+        sessionId: _sessionId,
+        userName: args.userName,
+        age: args.age,
+        gender: args.gender,
+        profession: args.profession,
+        city: args.city,
+        maritalStatus: args.maritalStatus,
+        childCount: args.childCount,
+        chronicIllness: args.chronicIllness,
+        traumaSummary: args.traumaSummary,
+      );
+
+      setState(() {
+        _sessionId = response.sessionId ?? _sessionId;
+        _messages.add(ChatMessage(
+          text: response.reply,
+          isUser: false,
+          isVoice: false,
+          timestamp: DateTime.now(),
+        ));
+      });
+      _scrollToBottom();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Hata oluştu: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isVoiceProcessing = false);
+      }
+    }
+  }
+
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+  }
+
   String get _statusText {
     if (_isRecording) return 'Dinliyorum...';
-    if (_isVoiceProcessing) return 'Dusunuyorum...';
-    if (_isSpeaking) return 'Konusuyorum... Dokunursan keserim.';
-    return 'Mikrofona dokun ve konus';
+    if (_isVoiceProcessing) return 'Düşünüyorum...';
+    if (_isSpeaking) return 'Konuşuyorum... Dokunursan keserim.';
+    return 'Mikrofona dokun ve konuş';
   }
 
   Color get _orbColor {
@@ -284,15 +409,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Çıkış',
-            onPressed: () async {
-              await _api.logout();
-              if (!mounted) return;
-              Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
-            },
-          ),
-          IconButton(
             icon: const Icon(Icons.person),
             tooltip: 'Profilim',
             onPressed: safeArgs.userId == null
@@ -317,6 +433,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                       );
                     }
 
+                    if (!context.mounted) return;
                     final updated = await Navigator.of(context).push<AuthUser>(
                       MaterialPageRoute(
                         builder: (_) => ProfileScreen(
@@ -346,101 +463,314 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       ),
       body: Column(
         children: [
-          Expanded(
-            child: Center(
-              child: AnimatedBuilder(
-                animation: Listenable.merge([_pulseController, _waveController]),
-                builder: (context, _) {
-                  final pulse = 1 + (_pulseController.value * 0.14);
-                  final auraScale = (_isRecording || _isSpeaking || _isVoiceProcessing) ? pulse : 1.0;
-                  return Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Transform.scale(
-                        scale: auraScale,
-                        child: Container(
-                          width: 220,
-                          height: 220,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: RadialGradient(
-                              colors: [
-                                _orbColor.withValues(alpha: 0.18),
-                                _orbColor.withValues(alpha: 0.04),
-                              ],
-                            ),
-                          ),
-                          child: Center(
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 350),
-                              width: (_isRecording || _isSpeaking) ? 140 : 125,
-                              height: (_isRecording || _isSpeaking) ? 140 : 125,
-                              decoration: BoxDecoration(
-                                color: _orbColor,
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: _orbColor.withValues(alpha: 0.50),
-                                    blurRadius: 28,
-                                    spreadRadius: 4,
-                                  ),
-                                ],
-                              ),
-                              child: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  Icon(_centerIcon, color: Colors.white, size: 44),
-                                  if (_isRecording || _isSpeaking)
-                                    _FakeWaveformBars(progress: _waveController.value),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 26),
-                      Text(
-                        _statusText,
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                      ),
-                    ],
-                  );
-                },
-              ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: SegmentedButton<bool>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment<bool>(
+                  value: true,
+                  icon: Icon(Icons.mic),
+                  label: Text('Sesli Sohbet'),
+                ),
+                ButtonSegment<bool>(
+                  value: false,
+                  icon: Icon(Icons.keyboard),
+                  label: Text('Yazılı Sohbet'),
+                ),
+              ],
+              selected: {_isVoiceMode},
+              onSelectionChanged: (selection) {
+                setState(() {
+                  _isVoiceMode = selection.first;
+                });
+                if (!_isVoiceMode) {
+                  _scrollToBottom();
+                }
+              },
             ),
           ),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _isVoiceProcessing ? null : () => _toggleVoice(safeArgs),
-                  icon: _isVoiceProcessing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(_isRecording
-                          ? Icons.stop_circle
-                          : _isSpeaking
-                              ? Icons.stop
-                              : Icons.mic),
-                  label: Text(
-                    _isRecording
-                        ? 'Kaydi Bitir ve Gonder'
-                        : _isSpeaking
-                            ? 'Botu Kes ve Konus'
-                            : 'Konusmaya Basla',
+          Expanded(
+            child: _isVoiceMode
+                ? _buildVoiceInterface()
+                : _buildTextInterface(safeArgs),
+          ),
+          if (_isVoiceMode)
+            _buildVoiceActionArea(safeArgs)
+          else
+            _buildTextActionArea(safeArgs),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVoiceInterface() {
+    return Center(
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_pulseController, _waveController]),
+        builder: (context, _) {
+          final pulse = 1 + (_pulseController.value * 0.14);
+          final auraScale = (_isRecording || _isSpeaking || _isVoiceProcessing) ? pulse : 1.0;
+          return Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Transform.scale(
+                scale: auraScale,
+                child: Container(
+                  width: 220,
+                  height: 220,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        _orbColor.withValues(alpha: 0.18),
+                        _orbColor.withValues(alpha: 0.04),
+                      ],
+                    ),
                   ),
-                  style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                  child: Center(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 350),
+                      width: (_isRecording || _isSpeaking) ? 140 : 125,
+                      height: (_isRecording || _isSpeaking) ? 140 : 125,
+                      decoration: BoxDecoration(
+                        color: _orbColor,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: _orbColor.withValues(alpha: 0.50),
+                            blurRadius: 28,
+                            spreadRadius: 4,
+                          ),
+                        ],
+                      ),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Icon(_centerIcon, color: Colors.white, size: 44),
+                          if (_isRecording || _isSpeaking)
+                            _FakeWaveformBars(progress: _waveController.value),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 26),
+              Text(
+                _statusText,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildVoiceActionArea(ChatArgs safeArgs) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+        child: SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _isVoiceProcessing ? null : () => _toggleVoice(safeArgs),
+            icon: _isVoiceProcessing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(_isRecording
+                    ? Icons.stop_circle
+                    : _isSpeaking
+                        ? Icons.stop
+                        : Icons.mic),
+            label: Text(
+              _isRecording
+                  ? 'Kaydi Bitir ve Gonder'
+                  : _isSpeaking
+                      ? 'Botu Kes ve Konus'
+                      : 'Konusmaya Basla',
+            ),
+            style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextInterface(ChatArgs safeArgs) {
+    if (_messages.isEmpty) {
+      return Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.psychology_alt,
+                size: 80,
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Merhaba, ${safeArgs.userName}',
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Ben yapay zeka destekli psikoloğunuz. Bugün kendinizi nasıl hissediyorsunuz? Aşağıdan bana yazabilir veya dilediğiniz an üst kısımdan Sesli Sohbet\'e geçebilirsiniz.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 15, color: Colors.grey, height: 1.4),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: _messages.length,
+      itemBuilder: (context, index) {
+        final msg = _messages[index];
+        return _buildMessageBubble(msg);
+      },
+    );
+  }
+
+  Widget _buildMessageBubble(ChatMessage msg) {
+    final theme = Theme.of(context);
+    final isUser = msg.isUser;
+
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
+        ),
+        decoration: BoxDecoration(
+          color: isUser
+              ? theme.colorScheme.primary
+              : theme.colorScheme.secondaryContainer.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isUser ? 16 : 4),
+            bottomRight: Radius.circular(isUser ? 4 : 16),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (msg.isVoice) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 2.0, right: 6.0),
+                child: Icon(
+                  Icons.mic,
+                  size: 15,
+                  color: isUser ? Colors.white70 : Colors.grey,
+                ),
+              ),
+            ],
+            Flexible(
+              child: Text(
+                msg.text,
+                style: TextStyle(
+                  color: isUser ? Colors.white : Colors.black87,
+                  fontSize: 15.5,
+                  height: 1.35,
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextActionArea(ChatArgs safeArgs) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.mic_none, color: Colors.grey),
+                      onPressed: () {
+                        setState(() {
+                          _isVoiceMode = true;
+                        });
+                      },
+                    ),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _textController,
+                        textInputAction: TextInputAction.send,
+                        onFieldSubmitted: (_) => _sendTextMessage(safeArgs),
+                        style: const TextStyle(color: Colors.black87),
+                        decoration: const InputDecoration(
+                          hintText: 'Bir mesaj yazın...',
+                          hintStyle: TextStyle(color: Colors.grey),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            FloatingActionButton(
+              mini: true,
+              elevation: 2,
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              onPressed: () => _sendTextMessage(safeArgs),
+              child: _isVoiceProcessing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : const Icon(Icons.send, color: Colors.white, size: 18),
+            ),
+          ],
+        ),
       ),
     );
   }
