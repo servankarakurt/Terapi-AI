@@ -5,12 +5,17 @@ import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
+import '../core/config/app_config.dart';
+import '../main.dart';
 import '../models/auth_models.dart';
+import '../models/chat_models.dart';
 import '../services/api_service.dart';
 import 'profile_screen.dart';
+
 
 class ChatArgs {
   ChatArgs({
@@ -85,6 +90,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final _textController = TextEditingController();
   final _scrollController = ScrollController();
 
+  String _selectedVoiceId = AppConfig.elevenLabsFemaleVoiceId;
+  List<ChatSession> _sessions = [];
+  bool _isLoadingSessions = false;
+
+
   static const double _speechThresholdDb = -45;
   static const Duration _silenceTimeout = Duration(seconds: 5);
   static const Duration _minRecordingBeforeAutoStop = Duration(milliseconds: 3000);
@@ -92,6 +102,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _loadVoicePreference();
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
@@ -108,6 +119,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       });
     });
   }
+
 
   @override
   void dispose() {
@@ -223,8 +235,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (mounted) {
       setState(() => _isVoiceProcessing = true);
     }
+    final hadNoSession = _sessionId == null;
     try {
       final response = await _api.sendVoiceMessage(
+
         audioFile: audioFile,
         userName: args.userName,
         age: args.age,
@@ -236,7 +250,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         chronicIllness: args.chronicIllness,
         traumaSummary: args.traumaSummary,
         sessionId: _sessionId,
+        voiceId: _selectedVoiceId,
       );
+
 
       setState(() {
         _sessionId = response.sessionId ?? _sessionId;
@@ -262,8 +278,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       String? audioBase64 = response.audioBase64;
       if ((audioBase64 == null || audioBase64.isEmpty) && response.reply.isNotEmpty) {
         // Fallback: local ElevenLabs Text-to-Speech synthesis from Flutter!
-        audioBase64 = await _api.generateTts(text: response.reply);
+        audioBase64 = await _api.generateTts(text: response.reply, voiceId: _selectedVoiceId);
       }
+
 
       if (audioBase64 != null && audioBase64.isNotEmpty) {
         final bytes = base64Decode(audioBase64);
@@ -286,7 +303,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           const SnackBar(content: Text('Sessizlik algılandı, kayıt otomatik gönderildi.')),
         );
       }
+      if (hadNoSession && _sessionId != null) {
+        _loadSessions();
+      }
     } catch (e) {
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Sesli işlem hatası: $e')),
@@ -329,6 +350,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         traumaSummary: args.traumaSummary,
       );
 
+      final hadNoSession = _sessionId == null;
       setState(() {
         _sessionId = response.sessionId ?? _sessionId;
         _messages.add(ChatMessage(
@@ -339,6 +361,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         ));
       });
       _scrollToBottom();
+      if (hadNoSession && _sessionId != null) {
+        _loadSessions();
+      }
+
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -404,10 +430,80 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final safeArgs = _chatArgs!;
 
     return Scaffold(
+      drawer: _buildDrawer(),
+      onDrawerChanged: (isOpened) {
+        if (isOpened) {
+          _loadSessions();
+        }
+      },
       appBar: AppBar(
         title: Text('Merhaba, ${safeArgs.userName}'),
         centerTitle: true,
         actions: [
+          IconButton(
+            icon: Icon(
+              themeNotifier.value == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode,
+            ),
+            tooltip: 'Tema Değiştir',
+            onPressed: _toggleTheme,
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.record_voice_over),
+            tooltip: 'Terapist Sesi',
+            onSelected: _changeVoice,
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: AppConfig.elevenLabsFemaleVoiceId,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.female,
+                      color: _selectedVoiceId == AppConfig.elevenLabsFemaleVoiceId
+                          ? const Color(0xFF6C63FF)
+                          : Colors.grey,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Kadın Terapist (Sarah)',
+                      style: TextStyle(
+                        color: _selectedVoiceId == AppConfig.elevenLabsFemaleVoiceId
+                            ? const Color(0xFF6C63FF)
+                            : null,
+                        fontWeight: _selectedVoiceId == AppConfig.elevenLabsFemaleVoiceId
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: AppConfig.elevenLabsMaleVoiceId,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.male,
+                      color: _selectedVoiceId == AppConfig.elevenLabsMaleVoiceId
+                          ? const Color(0xFF6C63FF)
+                          : Colors.grey,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Erkek Terapist (Brian)',
+                      style: TextStyle(
+                        color: _selectedVoiceId == AppConfig.elevenLabsMaleVoiceId
+                            ? const Color(0xFF6C63FF)
+                            : null,
+                        fontWeight: _selectedVoiceId == AppConfig.elevenLabsMaleVoiceId
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
           IconButton(
             icon: const Icon(Icons.person),
             tooltip: 'Profilim',
@@ -461,6 +557,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
         ],
       ),
+
       body: Column(
         children: [
           Padding(
@@ -774,9 +871,238 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       ),
     );
   }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.redAccent,
+      ),
+    );
+  }
+
+  Future<void> _loadVoicePreference() async {
+    final savedVoice = await const FlutterSecureStorage().read(key: 'selected_voice_id');
+    if (savedVoice != null && savedVoice.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _selectedVoiceId = savedVoice;
+        });
+      }
+    }
+  }
+
+  Future<void> _changeVoice(String voiceId) async {
+    setState(() {
+      _selectedVoiceId = voiceId;
+    });
+    await const FlutterSecureStorage().write(key: 'selected_voice_id', value: voiceId);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(voiceId == AppConfig.elevenLabsFemaleVoiceId
+              ? 'Terapist sesi Kadın (Sarah) olarak güncellendi.'
+              : 'Terapist sesi Erkek (Brian) olarak güncellendi.'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleTheme() async {
+    final newTheme = themeNotifier.value == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+    themeNotifier.value = newTheme;
+    await const FlutterSecureStorage().write(
+      key: 'theme_mode',
+      value: newTheme == ThemeMode.light ? 'light' : 'dark',
+    );
+  }
+
+  Future<void> _loadSessions() async {
+    if (_chatArgs?.userId == null) return;
+    setState(() => _isLoadingSessions = true);
+    try {
+      final sessions = await _api.getSessions(_chatArgs!.userId!);
+      setState(() {
+        _sessions = sessions;
+      });
+    } catch (e) {
+      print('Error loading sessions: $e');
+    } finally {
+      setState(() => _isLoadingSessions = false);
+    }
+  }
+
+  Future<void> _selectSession(int sessionId) async {
+    setState(() {
+      _sessionId = sessionId;
+      _messages.clear();
+      _isVoiceProcessing = true;
+    });
+    Navigator.of(context).pop();
+    try {
+      final history = await _api.getSessionHistory(sessionId);
+      setState(() {
+        for (final msg in history) {
+          final isUser = msg['role'] == 'user';
+          _messages.add(ChatMessage(
+            text: msg['content']?.toString() ?? '',
+            isUser: isUser,
+            isVoice: msg['audio_url'] != null || (msg['content']?.toString().length ?? 0) > 100,
+            timestamp: DateTime.tryParse(msg['created_at']?.toString() ?? '') ?? DateTime.now(),
+          ));
+        }
+      });
+      _scrollToBottom();
+    } catch (e) {
+      _showError('Geçmiş yüklenirken hata oluştu: $e');
+    } finally {
+      setState(() => _isVoiceProcessing = false);
+    }
+  }
+
+  void _startNewSession() {
+    setState(() {
+      _sessionId = null;
+      _messages.clear();
+    });
+    Navigator.of(context).pop();
+  }
+
+  Future<void> _deleteSession(int sessionId) async {
+    try {
+      await _api.deleteSession(sessionId);
+      if (_sessionId == sessionId) {
+        setState(() {
+          _sessionId = null;
+          _messages.clear();
+        });
+      }
+      await _loadSessions();
+    } catch (e) {
+      _showError('Oturum silinirken hata: $e');
+    }
+  }
+
+  Widget _buildDrawer() {
+    return Drawer(
+      backgroundColor: themeNotifier.value == ThemeMode.dark ? const Color(0xFF0F1026) : Colors.white,
+      child: Column(
+        children: [
+          DrawerHeader(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: themeNotifier.value == ThemeMode.dark
+                    ? [const Color(0xFF1E1F3B), const Color(0xFF323673)]
+                    : [const Color(0xFF5C6BC0), const Color(0xFF7C89CC)],
+              ),
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 30,
+                  backgroundColor: Colors.white24,
+                  child: const Icon(Icons.psychology, color: Colors.white, size: 36),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _chatArgs?.userName ?? 'Kullanıcı',
+                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Premium Terapist',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ListTile(
+            leading: Icon(Icons.add, color: themeNotifier.value == ThemeMode.dark ? Colors.white70 : Colors.black87),
+            title: Text(
+              'Yeni Sohbet Başlat',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: themeNotifier.value == ThemeMode.dark ? Colors.white : Colors.black87,
+              ),
+            ),
+            onTap: _startNewSession,
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Geçmiş Sohbetler',
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+          Expanded(
+            child: _isLoadingSessions
+                ? const Center(child: CircularProgressIndicator())
+                : _sessions.isEmpty
+                    ? Center(
+                        child: Text(
+                          'Geçmiş sohbet bulunamadı.',
+                          style: TextStyle(color: Colors.grey.shade500),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: _sessions.length,
+                        itemBuilder: (context, index) {
+                          final session = _sessions[index];
+                          final isCurrent = _sessionId == session.id;
+                          return ListTile(
+                            selected: isCurrent,
+                            selectedTileColor: themeNotifier.value == ThemeMode.dark
+                                ? const Color(0xFF6C63FF).withValues(alpha: 0.15)
+                                : const Color(0xFF6C63FF).withValues(alpha: 0.08),
+                            leading: Icon(
+                              session.isVoiceSession ? Icons.mic : Icons.chat,
+                              color: isCurrent ? const Color(0xFF6C63FF) : Colors.grey,
+                            ),
+                            title: Text(
+                              session.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: isCurrent
+                                    ? const Color(0xFF6C63FF)
+                                    : (themeNotifier.value == ThemeMode.dark ? Colors.white70 : Colors.black87),
+                                fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 20),
+                              color: Colors.redAccent.withValues(alpha: 0.7),
+                              onPressed: () => _deleteSession(session.id),
+                            ),
+                            onTap: () => _selectSession(session.id),
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _FakeWaveformBars extends StatelessWidget {
+
   const _FakeWaveformBars({required this.progress});
 
   final double progress;

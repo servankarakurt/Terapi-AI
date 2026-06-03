@@ -216,6 +216,55 @@ def create_google_user(username, display_name):
     finally:
         conn.close()
 
+def get_or_create_firebase_user(uid, display_name=None, email=None, phone=None, is_guest=False):
+    username = f"firebase_{uid}"
+    user = get_user_by_username(username)
+    if user:
+        return user
+
+    # Otherwise, create it
+    if not display_name:
+        if is_guest:
+            display_name = "Misafir Terapist"
+        elif email:
+            display_name = email.split("@")[0]
+        elif phone:
+            display_name = f"Kullanıcı ({phone[-4:]})"
+        else:
+            display_name = "Firebase Kullanıcısı"
+
+    conn = get_connection()
+    c = conn.cursor()
+    try:
+        user_id = _insert_query(c,
+            """INSERT INTO users
+               (username, password_hash, display_name, age, gender, profession, city, marital_status, child_count, chronic_illness, trauma_summary, avatar, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                username,
+                "",
+                display_name,
+                0,
+                "Belirtilmedi",
+                "",
+                "",
+                "Belirtilmedi",
+                0,
+                "",
+                "",
+                "default",
+                datetime.now(timezone.utc).isoformat() if IS_POSTGRES else datetime.now(),
+            ),
+        )
+        conn.commit()
+        return get_user_by_id(user_id)
+    except Exception as e:
+        print(f"Error creating firebase user: {e}")
+        return get_user_by_username(username)
+    finally:
+        conn.close()
+
+
 def login_user(username, password):
     conn = get_connection()
     c = conn.cursor()

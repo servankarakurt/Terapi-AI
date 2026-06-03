@@ -21,4 +21,7 @@ class AppConfig {
     'ELEVENLABS_VOICE_ID',
     defaultValue: 'EXAVITQu4vr4xnSDxMaL',
   );
+
+  static const String elevenLabsFemaleVoiceId = 'EXAVITQu4vr4xnSDxMaL';
+  static const String elevenLabsMaleVoiceId = 'nPczCjzI2devNBz1zQrb';
 }

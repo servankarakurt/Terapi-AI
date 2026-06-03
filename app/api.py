@@ -271,8 +271,16 @@ class LoginRequest(BaseModel):
 class GoogleLoginRequest(BaseModel):
     id_token: str
 
+class FirebaseLoginRequest(BaseModel):
+    uid: str
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    is_guest: bool = False
+
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
+
 
 class LogoutRequest(BaseModel):
     refresh_token: str
@@ -359,6 +367,20 @@ async def google_login_endpoint(req: GoogleLoginRequest):
         raise HTTPException(status_code=500, detail="Google kullanıcı kaydı oluşturulamadı.")
     return _auth_response(user, "Google girişi başarılı")
 
+@app.post("/auth/firebase")
+async def firebase_login_endpoint(req: FirebaseLoginRequest):
+    user = db.get_or_create_firebase_user(
+        uid=req.uid,
+        display_name=req.display_name,
+        email=req.email,
+        phone=req.phone,
+        is_guest=req.is_guest
+    )
+    if not user:
+        raise HTTPException(status_code=500, detail="Firebase kullanıcı kaydı oluşturulamadı.")
+    return _auth_response(user, "Firebase girişi başarılı")
+
+
 @app.post("/auth/refresh")
 async def refresh_endpoint(req: RefreshTokenRequest):
     user = db.validate_refresh_token(req.refresh_token)
@@ -441,11 +463,11 @@ def transcribe_with_groq(audio_bytes: bytes, filename: str, content_type: str) -
         raise HTTPException(status_code=422, detail="Ses metne çevrilemedi.")
     return transcript
 
-def generate_tts_elevenlabs(text: str) -> bytes:
+def generate_tts_elevenlabs(text: str, voice_id: Optional[str] = None) -> bytes:
     if not ELEVENLABS_API_KEY:
         raise HTTPException(status_code=500, detail="ELEVENLABS_API_KEY tanımlı değil.")
-    if not ELEVENLABS_VOICE_ID:
-        raise HTTPException(status_code=500, detail="ELEVENLABS_VOICE_ID tanımlı değil.")
+    
+    selected_voice = voice_id or ELEVENLABS_VOICE_ID or "EXAVITQu4vr4xnSDxMaL"
     if not text.strip():
         raise HTTPException(status_code=400, detail="Ses üretmek için metin boş olamaz.")
 
@@ -454,7 +476,8 @@ def generate_tts_elevenlabs(text: str) -> bytes:
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {"stability": 0.45, "similarity_boost": 0.75},
     }
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{selected_voice}"
+
 
     try:
         response = requests.post(
@@ -628,7 +651,9 @@ def _run_chat_flow(
     3. Kullanıcıya tavsiye vermek yerine, onu düşündürecek sorular sor (Sokratik Sorgulama).
     4. Samimi ve kısa tut.
     5. Cevaplarında "Yapay zeka", "Dil modeli", "Bilgi kesilme tarihi" gibi robotik ifadeler KULLANMA.
+    6. Cevaplarında kesinlikle "BDT", "Bilişsel Davranışçı Terapi", "terapi yöntemi" gibi terimleri ve kısaltmaları cümle içinde doğrudan KULLANMA; bu yaklaşımı arka planda benimse ama kullanıcıya bunu hissettirerek uygula.
     """
+
 
     model = genai.GenerativeModel("gemini-2.5-flash", system_instruction=system_instruction)
     gemini_history = _build_gemini_history(current_session_id, history)
@@ -674,9 +699,11 @@ async def mobile_chat_endpoint(
     chronic_illness: str = Form(""),
     trauma_summary: str = Form(""),
     session_id: Optional[int] = Form(None),
+    voice_id: Optional[str] = Form(None),
     k: int = Form(3),
     current_user: dict = Depends(get_current_user),
 ):
+
     _enforce_rate_limit(
         key=f"mobile-chat:{current_user['id']}",
         limit=MOBILE_CHAT_RATE_LIMIT_PER_MIN,
@@ -710,10 +737,11 @@ async def mobile_chat_endpoint(
     audio_base64 = None
     tts_error = None
     try:
-        audio_bytes_reply = generate_tts_elevenlabs(chat_result["reply"])
+        audio_bytes_reply = generate_tts_elevenlabs(chat_result["reply"], voice_id)
         audio_base64 = base64.b64encode(audio_bytes_reply).decode("utf-8")
     except HTTPException as exc:
         tts_error = exc.detail
+
 
     return {
         "reply": chat_result["reply"],

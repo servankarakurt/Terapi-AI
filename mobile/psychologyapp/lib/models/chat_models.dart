@@ -25,3 +25,27 @@ class MobileChatResult {
   final int? sessionId;
   final String? ttsError;
 }
+
+class ChatSession {
+  ChatSession({
+    required this.id,
+    required this.title,
+    required this.isVoiceSession,
+    required this.createdAt,
+  });
+
+  final int id;
+  final String title;
+  final bool isVoiceSession;
+  final String createdAt;
+
+  factory ChatSession.fromJson(Map<String, dynamic> json) {
+    return ChatSession(
+      id: json['id'] as int,
+      title: json['title'] as String? ?? 'Yeni Sohbet',
+      isVoiceSession: (json['is_voice_session'] == true || json['is_voice_session'] == 1 || json['is_voice_session'] == '1'),
+      createdAt: json['created_at'] as String? ?? '',
+    );
+  }
+}
+

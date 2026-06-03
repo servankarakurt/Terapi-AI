@@ -149,6 +149,43 @@ class ApiService {
     return result;
   }
 
+  Future<AuthResult> loginWithFirebase({
+    required String uid,
+    String? displayName,
+    String? email,
+    String? phone,
+    bool isGuest = false,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('${AppConfig.apiBaseUrl}/auth/firebase'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'uid': uid,
+        'display_name': displayName,
+        'email': email,
+        'phone': phone,
+        'is_guest': isGuest,
+      }),
+    );
+
+    final body = _decodeJson(response.body);
+    if (response.statusCode >= 400) {
+      throw Exception(body['detail'] ?? 'Firebase girişi hatası');
+    }
+
+    final user = body['user'] as Map<String, dynamic>? ?? {};
+    final token = body['access_token']?.toString();
+    final refreshToken = body['refresh_token']?.toString();
+    final result = AuthResult(
+      user: AuthUser.fromJson(user),
+      accessToken: token ?? '',
+      refreshToken: refreshToken ?? '',
+    );
+    await _persistSession(result);
+    return result;
+  }
+
+
   Future<void> refreshAccessToken() async {
     if (_refreshToken == null || _refreshToken!.isEmpty) {
       throw Exception('Refresh token bulunamadı');
@@ -303,7 +340,9 @@ class ApiService {
     String chronicIllness = '',
     String traumaSummary = '',
     int? sessionId,
+    String? voiceId,
   }) async {
+
     final streamedResponse = await _sendAuthorizedMultipart(
       () async {
         final request =
@@ -323,6 +362,8 @@ class ApiService {
           request.headers.addAll(authHeaders);
         }
         if (sessionId != null) request.fields['session_id'] = sessionId.toString();
+        if (voiceId != null) request.fields['voice_id'] = voiceId;
+
 
         request.files.add(await http.MultipartFile.fromPath('audio_file', audioFile.path));
         return request;
@@ -344,7 +385,63 @@ class ApiService {
     );
   }
 
+  Future<List<ChatSession>> getSessions(int userId) async {
+    final response = await _sendAuthorized(
+      (headers) => _client.get(
+        Uri.parse('${AppConfig.apiBaseUrl}/chat/sessions/$userId'),
+        headers: headers,
+      ),
+    );
+
+    final body = _decodeJson(response.body);
+    if (response.statusCode >= 400) {
+      throw Exception(body['detail'] ?? 'Sohbet oturumları yüklenemedi');
+    }
+
+    final rawSessions = body['sessions'] as List?;
+    if (rawSessions == null) return [];
+    return rawSessions
+        .map((s) => ChatSession.fromJson(s as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getSessionHistory(int sessionId) async {
+    final response = await _sendAuthorized(
+      (headers) => _client.get(
+        Uri.parse('${AppConfig.apiBaseUrl}/chat/history/$sessionId'),
+        headers: headers,
+      ),
+    );
+
+    final body = _decodeJson(response.body);
+    if (response.statusCode >= 400) {
+      throw Exception(body['detail'] ?? 'Sohbet geçmişi yüklenemedi');
+    }
+
+    final messages = body['messages'] as List?;
+    if (messages == null) return [];
+    return List<Map<String, dynamic>>.from(
+      messages.map((m) => m as Map<String, dynamic>),
+    );
+  }
+
+  Future<void> deleteSession(int sessionId) async {
+    final response = await _sendAuthorized(
+      (headers) => _client.delete(
+        Uri.parse('${AppConfig.apiBaseUrl}/chat/sessions/$sessionId'),
+        headers: headers,
+      ),
+    );
+
+    final body = _decodeJson(response.body);
+    if (response.statusCode >= 400) {
+      throw Exception(body['detail'] ?? 'Sohbet oturumu silinemedi');
+    }
+  }
+
+
   Map<String, dynamic> _decodeJson(String source) {
+
     if (source.isEmpty) return {};
     return jsonDecode(source) as Map<String, dynamic>;
   }
@@ -401,14 +498,18 @@ class ApiService {
     return retryRequest.send();
   }
 
-  Future<String?> generateTts({required String text}) async {
-    if (AppConfig.elevenLabsApiKey.isEmpty || AppConfig.elevenLabsVoiceId.isEmpty) {
+  Future<String?> generateTts({required String text, String? voiceId}) async {
+    if (AppConfig.elevenLabsApiKey.isEmpty) {
       return null;
     }
     
     try {
-      var voiceId = AppConfig.elevenLabsVoiceId;
-      var url = Uri.parse('https://api.elevenlabs.io/v1/text-to-speech/$voiceId');
+      var selectedVoice = voiceId ?? AppConfig.elevenLabsVoiceId;
+      if (selectedVoice.isEmpty) {
+        selectedVoice = 'EXAVITQu4vr4xnSDxMaL'; // Sarah fallback
+      }
+      var url = Uri.parse('https://api.elevenlabs.io/v1/text-to-speech/$selectedVoice');
+
       var response = await _client.post(
         url,
         headers: {
