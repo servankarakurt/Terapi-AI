@@ -382,7 +382,9 @@ class ApiService {
       audioBase64: body['audio_base64']?.toString(),
       sessionId: body['session_id'] as int?,
       ttsError: body['tts_error']?.toString(),
+      isCrisis: body['is_crisis'] == true,
     );
+
   }
 
   Future<List<ChatSession>> getSessions(int userId) async {

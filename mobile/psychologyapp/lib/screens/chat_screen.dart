@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/config/app_config.dart';
 import '../main.dart';
@@ -93,6 +94,46 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   String _selectedVoiceId = AppConfig.elevenLabsFemaleVoiceId;
   List<ChatSession> _sessions = [];
   bool _isLoadingSessions = false;
+
+  Future<void> _makeEmergencyCall() async {
+    final Uri telUri = Uri.parse('tel:112');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ KRİZ DURUMU ALGILANDI! 112 Acil Çağrı Merkezi aranıyor...'),
+          backgroundColor: Colors.redAccent,
+          duration: Duration(seconds: 4),
+        ),
+      );
+    }
+    
+    await Future.delayed(const Duration(milliseconds: 1000));
+    
+    try {
+      if (await canLaunchUrl(telUri)) {
+        await launchUrl(telUri, mode: LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Arama başlatılamadı. Lütfen manuel olarak 112\'yi arayın!'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Arama Hatası: $e. Lütfen 112\'yi doğrudan arayın!'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
 
 
   static const double _speechThresholdDb = -45;
@@ -306,6 +347,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       if (hadNoSession && _sessionId != null) {
         _loadSessions();
       }
+      if (response.isCrisis) {
+        _makeEmergencyCall();
+      }
     } catch (e) {
 
       if (!mounted) return;
@@ -363,6 +407,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       _scrollToBottom();
       if (hadNoSession && _sessionId != null) {
         _loadSessions();
+      }
+      if (response.isCrisis) {
+        _makeEmergencyCall();
       }
 
     } catch (e) {

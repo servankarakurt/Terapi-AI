@@ -17,6 +17,7 @@ class MobileChatResult {
     required this.audioBase64,
     required this.sessionId,
     required this.ttsError,
+    required this.isCrisis,
   });
 
   final String reply;
@@ -24,7 +25,9 @@ class MobileChatResult {
   final String? audioBase64;
   final int? sessionId;
   final String? ttsError;
+  final bool isCrisis;
 }
+
 
 class ChatSession {
   ChatSession({
