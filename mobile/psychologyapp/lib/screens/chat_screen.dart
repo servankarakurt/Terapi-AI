@@ -134,6 +134,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
+  bool _isCurrentSessionBlocked() {
+    if (_sessionId == null) return false;
+    try {
+      final sess = _sessions.firstWhere((s) => s.id == _sessionId);
+      return sess.isBlocked;
+    } catch (_) {
+      return false;
+    }
+  }
+
 
 
   static const double _speechThresholdDb = -45;
@@ -177,6 +187,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   Future<void> _toggleVoice(ChatArgs args) async {
     if (_isVoiceProcessing) return;
+
+    if (_isCurrentSessionBlocked()) {
+      _makeEmergencyCall();
+      return;
+    }
 
     if (_isSpeaking) {
       await _player.stop();
@@ -348,6 +363,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _loadSessions();
       }
       if (response.isCrisis) {
+        if (_sessionId != null) {
+          final idx = _sessions.indexWhere((s) => s.id == _sessionId);
+          if (idx != -1) {
+            final oldSess = _sessions[idx];
+            _sessions[idx] = ChatSession(
+              id: oldSess.id,
+              title: oldSess.title,
+              isVoiceSession: oldSess.isVoiceSession,
+              createdAt: oldSess.createdAt,
+              isBlocked: true,
+            );
+          }
+        }
         _makeEmergencyCall();
       }
     } catch (e) {
@@ -365,6 +393,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Future<void> _sendTextMessage(ChatArgs args) async {
     final query = _textController.text.trim();
     if (query.isEmpty) return;
+
+    if (_isCurrentSessionBlocked()) {
+      _makeEmergencyCall();
+      return;
+    }
 
     _textController.clear();
 
@@ -409,6 +442,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _loadSessions();
       }
       if (response.isCrisis) {
+        if (_sessionId != null) {
+          final idx = _sessions.indexWhere((s) => s.id == _sessionId);
+          if (idx != -1) {
+            final oldSess = _sessions[idx];
+            _sessions[idx] = ChatSession(
+              id: oldSess.id,
+              title: oldSess.title,
+              isVoiceSession: oldSess.isVoiceSession,
+              createdAt: oldSess.createdAt,
+              isBlocked: true,
+            );
+          }
+        }
         _makeEmergencyCall();
       }
 

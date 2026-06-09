@@ -35,12 +35,14 @@ class ChatSession {
     required this.title,
     required this.isVoiceSession,
     required this.createdAt,
+    required this.isBlocked,
   });
 
   final int id;
   final String title;
   final bool isVoiceSession;
   final String createdAt;
+  final bool isBlocked;
 
   factory ChatSession.fromJson(Map<String, dynamic> json) {
     return ChatSession(
@@ -48,7 +50,9 @@ class ChatSession {
       title: json['title'] as String? ?? 'Yeni Sohbet',
       isVoiceSession: (json['is_voice_session'] == true || json['is_voice_session'] == 1 || json['is_voice_session'] == '1'),
       createdAt: json['created_at'] as String? ?? '',
+      isBlocked: json['is_blocked'] == true || json['is_blocked'] == 1 || json['is_blocked'] == '1',
     );
   }
 }
+
 

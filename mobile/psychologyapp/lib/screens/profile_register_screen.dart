@@ -637,37 +637,7 @@ class _ProfileRegisterScreenState extends State<ProfileRegisterScreen> with Sing
                           height: 1.4,
                         ),
                       ),
-                      const SizedBox(height: 20),
-                      SegmentedButton<bool>(
-                        showSelectedIcon: false,
-                        style: SegmentedButton.styleFrom(
-                          selectedBackgroundColor: const Color(0xFF6C63FF),
-                          selectedForegroundColor: Colors.white,
-                          foregroundColor: Colors.white70,
-                          side: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                        segments: const [
-                          ButtonSegment<bool>(
-                            value: false,
-                            icon: Icon(Icons.person_add_alt_1),
-                            label: Text('Kayıt', style: TextStyle(fontWeight: FontWeight.bold)),
-                          ),
-                          ButtonSegment<bool>(
-                            value: true,
-                            icon: Icon(Icons.login),
-                            label: Text('Giriş', style: TextStyle(fontWeight: FontWeight.bold)),
-                          ),
-                        ],
-                        selected: {_isLoginMode},
-                        onSelectionChanged: (selection) {
-                          setState(() => _isLoginMode = selection.first);
-                        },
-                      ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 12),
                       _buildInput(_usernameController, 'E-posta Adresi', Icons.email, isRequired: true, keyboardType: TextInputType.emailAddress),
                       _buildInput(_passwordController, 'Şifre', Icons.lock, obscureText: true, isRequired: true),
                       if (!_isLoginMode) ...[
@@ -736,6 +706,28 @@ class _ProfileRegisterScreenState extends State<ProfileRegisterScreen> with Sing
                                   _isLoginMode ? 'Giriş Yap' : 'Kaydet ve Sohbete Geç',
                                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                                 ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Center(
+                        child: TextButton(
+                          onPressed: _isLoading
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _isLoginMode = !_isLoginMode;
+                                  });
+                                },
+                          child: Text(
+                            _isLoginMode
+                                ? 'Hesabınız yoksa kayıt olun'
+                                : 'Hesabınız varsa buradan giriş yapabilirsiniz',
+                            style: const TextStyle(
+                              color: Color(0xFF90CAF9),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 12),

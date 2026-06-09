@@ -603,6 +603,20 @@ def _run_chat_flow(
 
     if current_session_id:
         assert_session_owner(current_session_id, current_user_id)
+        if db.is_session_blocked(current_session_id):
+            reply_text = (
+                "⚠️ **ÖNEMLİ UYARI:** Bu sohbet oturumu acil durum nedeniyle dondurulmuştur. "
+                "Lütfen yalnız kalmayın ve acil yardım desteği alın.\n\n"
+                "**Acil Destek:**\n"
+                "- 📞 **112** Acil Çağrı\n"
+                "- 📞 **ALO 183** Sosyal Destek"
+            )
+            return {
+                "reply": reply_text,
+                "sources": ["KRİZ PROTOKOLÜ"],
+                "is_crisis": True,
+                "session_id": current_session_id,
+            }
 
     if not current_session_id:
         title = (query[:25] + "..") if len(query) > 25 else query
@@ -614,6 +628,8 @@ def _run_chat_flow(
     is_crisis, confidence = detect_crisis(query)
     if is_crisis:
         print(f"KRIZ TESPIT EDILDI! Skor: {confidence:.4f}")
+        if current_session_id:
+            db.block_session(current_session_id)
         reply_text = (
             "⚠️ **ÖNEMLİ UYARI:** Yazdıklarınızdan zor bir süreçten geçtiğiniz anlaşılıyor. "
             "Lütfen yalnız kalmayın.\n\n"

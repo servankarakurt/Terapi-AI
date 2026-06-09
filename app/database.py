@@ -70,6 +70,7 @@ def init_db():
                       user_id INTEGER, 
                       title TEXT, 
                       is_voice_session BOOLEAN DEFAULT FALSE,
+                      is_blocked BOOLEAN DEFAULT FALSE,
                       created_at TIMESTAMP,
                       FOREIGN KEY(user_id) REFERENCES users(id))''')
         
@@ -116,6 +117,7 @@ def init_db():
                       user_id INTEGER, 
                       title TEXT, 
                       is_voice_session BOOLEAN DEFAULT 0,
+                      is_blocked INTEGER DEFAULT 0,
                       created_at TIMESTAMP,
                       FOREIGN KEY(user_id) REFERENCES users(id))''')
         
@@ -143,6 +145,18 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_messages_session_created_at ON messages(session_id, created_at)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)")
     
+    # Veritabanı Migrasyonları (Kolon eklemeleri)
+    if IS_POSTGRES:
+        try:
+            c.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE")
+        except Exception:
+            pass
+    else:
+        try:
+            c.execute("ALTER TABLE sessions ADD COLUMN is_blocked INTEGER DEFAULT 0")
+        except Exception:
+            pass
+            
     conn.commit()
     conn.close()
 
@@ -352,8 +366,8 @@ def create_session(user_id, title="Yeni Sohbet", is_voice_session=False):
 def get_user_sessions(user_id):
     conn = get_connection()
     c = conn.cursor()
-    _execute_query(c, "SELECT id, title, is_voice_session, created_at FROM sessions WHERE user_id=? ORDER BY created_at DESC", (user_id,))
-    sessions = [{"id": row[0], "title": row[1], "is_voice_session": row[2], "created_at": row[3]} for row in c.fetchall()]
+    _execute_query(c, "SELECT id, title, is_voice_session, created_at, is_blocked FROM sessions WHERE user_id=? ORDER BY created_at DESC", (user_id,))
+    sessions = [{"id": row[0], "title": row[1], "is_voice_session": row[2], "created_at": row[3], "is_blocked": bool(row[4])} for row in c.fetchall()]
     conn.close()
     return sessions
 
@@ -366,6 +380,25 @@ def delete_session(session_id):
     conn.commit()
     conn.close()
     return deleted
+
+def block_session(session_id):
+    conn = get_connection()
+    c = conn.cursor()
+    _execute_query(c, "UPDATE sessions SET is_blocked = ? WHERE id = ?", (True, session_id))
+    conn.commit()
+    conn.close()
+
+def is_session_blocked(session_id):
+    if not session_id:
+        return False
+    conn = get_connection()
+    c = conn.cursor()
+    _execute_query(c, "SELECT is_blocked FROM sessions WHERE id = ?", (session_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return bool(row[0])
+    return False
 
 def save_message(session_id, role, content, audio_url=None):
     conn = get_connection()

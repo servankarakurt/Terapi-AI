@@ -36,6 +36,12 @@ if "tts_enabled" not in st.session_state:
     st.session_state.tts_enabled = False
 if "audio_to_play" not in st.session_state:
     st.session_state.audio_to_play = None
+if "klass_mode" not in st.session_state:
+    st.session_state.klass_mode = "Giriş Yap"
+if "email_mode" not in st.session_state:
+    st.session_state.email_mode = "Giriş Yap"
+if "current_session_blocked" not in st.session_state:
+    st.session_state.current_session_blocked = False
 
 # --- Firebase Rest API Yardımcıları ---
 def firebase_email_login(email, password):
@@ -250,8 +256,7 @@ def login_page():
 
         with tab1:
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-            klass_action = st.radio("İşlem Seçin:", ["Giriş Yap", "Kayıt Ol"], horizontal=True, key="klass_action")
-            if klass_action == "Giriş Yap":
+            if st.session_state.klass_mode == "Giriş Yap":
                 username = st.text_input("Kullanıcı Adı", key="login_user")
                 password = st.text_input("Şifre", type="password", key="login_pass")
                 if st.button("Giriş Yap", type="primary", use_container_width=True, key="btn_classic_login"):
@@ -269,6 +274,11 @@ def login_page():
                             st.error("Hatalı kullanıcı adı veya şifre.")
                     except Exception as e:
                         st.error(f"Sunucuya ulaşılamıyor: {e}")
+                
+                # Switch to registration
+                if st.button("Hesabınız yoksa kayıt olun", use_container_width=True, key="btn_switch_to_klass_reg"):
+                    st.session_state.klass_mode = "Kayıt Ol"
+                    st.rerun()
             else:
                 new_user = st.text_input("Kullanıcı Adı", key="reg_user")
                 new_pass = st.text_input("Şifre", type="password", key="reg_pass")
@@ -294,13 +304,17 @@ def login_page():
                             st.error(f"Sunucuya ulaşılamıyor: {e}")
                     else:
                         st.warning("Lütfen tüm alanları doldur.")
+                
+                # Switch to login
+                if st.button("Hesabınız varsa buradan giriş yapabilirsiniz", use_container_width=True, key="btn_switch_to_klass_login"):
+                    st.session_state.klass_mode = "Giriş Yap"
+                    st.rerun()
 
         with tab2:
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-            email_action = st.radio("İşlem Seçin:", ["Giriş Yap", "Hesap Oluştur"], horizontal=True, key="email_action")
             email = st.text_input("E-posta Adresi", key="fb_email")
             email_pass = st.text_input("Şifre", type="password", key="fb_email_pass")
-            if email_action == "Giriş Yap":
+            if st.session_state.email_mode == "Giriş Yap":
                 if st.button("Firebase E-posta ile Giriş Yap", type="primary", use_container_width=True, key="btn_fb_email_login"):
                     if email and email_pass:
                         with st.spinner("Giriş yapılıyor..."):
@@ -332,6 +346,11 @@ def login_page():
                                 st.error(f"Giriş başarısız: {err_msg}")
                     else:
                         st.warning("Lütfen e-posta ve şifrenizi girin.")
+                
+                # Switch to registration
+                if st.button("Hesabınız yoksa kayıt olun", use_container_width=True, key="btn_switch_to_email_reg"):
+                    st.session_state.email_mode = "Kayıt Ol"
+                    st.rerun()
             else:
                 email_name = st.text_input("Görünen Adın", key="fb_email_name")
                 if st.button("Firebase E-posta ile Kayıt Ol", use_container_width=True, key="btn_fb_email_reg"):
@@ -365,6 +384,11 @@ def login_page():
                                 st.error(f"Kayıt başarısız: {err_msg}")
                     else:
                         st.warning("Lütfen tüm alanları doldurun.")
+                
+                # Switch to login
+                if st.button("Hesabınız varsa buradan giriş yapabilirsiniz", use_container_width=True, key="btn_switch_to_email_login"):
+                    st.session_state.email_mode = "Giriş Yap"
+                    st.rerun()
 
         with tab3:
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
@@ -587,6 +611,7 @@ def chat_page():
         st.subheader("🗂️ Sohbet Geçmişi")
         if st.button("➕ Yeni Sohbet Başlat", use_container_width=True):
             st.session_state.current_session_id = None
+            st.session_state.current_session_blocked = False
             st.session_state.messages = []
             st.rerun()
 
@@ -602,6 +627,7 @@ def chat_page():
                     with scol1:
                         if st.button(f"📄 {sess_title}", key=f"sess_{sess['id']}", type=b_type, use_container_width=True):
                             st.session_state.current_session_id = sess["id"]
+                            st.session_state.current_session_blocked = sess.get("is_blocked", False)
                             hist_resp = requests.get(f"{API_BASE_URL}/chat/history/{sess['id']}", headers=get_headers())
                             if hist_resp.status_code == 200:
                                 st.session_state.messages = hist_resp.json().get("messages", [])
@@ -616,12 +642,13 @@ def chat_page():
         except Exception:
             st.error("Oturumlar yüklenemedi.")
 
-        st.divider()
-        st.subheader("🎤 Sesli Mesaj")
-        audio_val = st.audio_input("Ses kaydedin")
-        if audio_val and st.button("Gönder", use_container_width=True, type="primary", key="btn_send_audio"):
-            st.session_state.pending_audio = audio_val
-            st.rerun()
+        if not st.session_state.get("current_session_blocked", False):
+            st.divider()
+            st.subheader("🎤 Sesli Mesaj")
+            audio_val = st.audio_input("Ses kaydedin")
+            if audio_val and st.button("Gönder", use_container_width=True, type="primary", key="btn_send_audio"):
+                st.session_state.pending_audio = audio_val
+                st.rerun()
 
         st.divider()
         if st.button("Çıkış Yap", use_container_width=True, key="btn_logout"):
@@ -655,9 +682,22 @@ def chat_page():
             st.markdown(f"<div style='display:flex;justify-content:flex-start;'><div style='margin-right:12px; font-size:28px; padding-top:10px;'>🧠</div><div class='chat-ai'>{content}</div></div>", unsafe_allow_html=True)
 
     # Girdi Alanı
-    if prompt := st.chat_input("Buraya yaz..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.rerun()
+    if st.session_state.get("current_session_blocked", False):
+        st.markdown(
+            '<div class="crisis-alert" style="margin-top: 20px;">'
+            '⚠️ **BU SOHBET ACİL DURUM NEDENİYLE DONDURULMUŞTUR.**<br>'
+            'Lütfen yalnız kalmayın ve acil yardım desteği alın.<br><br>'
+            '<b>Acil Destek Hatları:</b><br>'
+            '- 📞 <b>112</b> Acil Çağrı<br>'
+            '- 📞 <b>ALO 183</b> Sosyal Destek'
+            '</div>', 
+            unsafe_allow_html=True
+        )
+        st.chat_input("Bu sohbet oturumu dondurulmuştur.", disabled=True)
+    else:
+        if prompt := st.chat_input("Buraya yaz..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.rerun()
 
     # Sesli Mesaj İşlemesi
     if getattr(st.session_state, "pending_audio", None) is not None:
@@ -685,6 +725,9 @@ def chat_page():
                     
                     if new_session_id:
                         st.session_state.current_session_id = new_session_id
+                    
+                    if is_crisis:
+                        st.session_state.current_session_blocked = True
                     
                     st.session_state.messages.append({"role": "user", "content": f"🎤 *Sesli Mesaj:* {transcript}"})
                     st.session_state.messages.append({"role": "model", "content": reply})
@@ -735,7 +778,10 @@ def chat_page():
                         
                         if new_session_id:
                             st.session_state.current_session_id = new_session_id
-
+                        
+                        if is_crisis:
+                            st.session_state.current_session_blocked = True
+ 
                         st.session_state.messages.append({"role": "model", "content": reply})
 
                         # Yazılı Mesaj Sonrası Otomatik TTS
