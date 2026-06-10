@@ -62,6 +62,31 @@ app.add_middleware(
 async def read_root():
     return {"status": "healthy", "message": "Psikoloji AI Chatbot API is running"}
 
+@app.get("/debug-db")
+async def debug_db():
+    import os
+    db_url = os.getenv("DATABASE_URL", "")
+    is_postgres = db.IS_POSTGRES
+    connection_status = "unknown"
+    error = None
+    try:
+        conn = db.get_connection()
+        c = conn.cursor()
+        c.execute("SELECT 1")
+        conn.close()
+        connection_status = "connected"
+    except Exception as e:
+        connection_status = "failed"
+        error = str(e)
+    
+    return {
+        "is_postgres": is_postgres,
+        "has_db_url": bool(db_url),
+        "db_url_masked": db_url.split("@")[-1] if db_url else None,
+        "connection_status": connection_status,
+        "error": error
+    }
+
 # Global Değişkenler
 embedding_model = None
 index = None
